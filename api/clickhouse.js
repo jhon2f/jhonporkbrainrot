@@ -21,10 +21,12 @@ function checkRateLimit(ip) {
 }
 
 export default async function handler(req, res) {
-  // Set CORS headers
+  // Set CORS headers - enhanced for Cloudflare
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, CF-Connecting-IP, CF-Ray');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -47,14 +49,23 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: 'Too many requests' });
     }
 
-    // Origin check for production - more flexible
-    const allowedOrigins = ['https://dropbase.shop', 'https://your-app.vercel.app'];
+    // Origin check for production - include Cloudflare domain
+    const allowedOrigins = [
+      'https://dropbase.shop', 
+      'https://your-app.vercel.app',
+      'https://www.dropbase.shop'  // Add www version if using Cloudflare
+    ];
     const origin = req.headers['origin'] || req.headers['referer'] || '';
     
     // Skip origin check in development or if no origin header
-    if (process.env.NODE_ENV === 'production' && origin && !allowedOrigins.some(allowed => origin.startsWith(allowed))) {
-      console.log(`Origin check failed. Origin: ${origin}, Allowed: ${allowedOrigins.join(', ')}`);
-      return res.status(403).json({ error: 'Forbidden: Invalid origin' });
+    if (process.env.NODE_ENV === 'production' && origin) {
+      const isAllowed = allowedOrigins.some(allowed => 
+        origin.startsWith(allowed) || origin.replace('www.', '').startsWith(allowed.replace('www.', ''))
+      );
+      if (!isAllowed) {
+        console.log(`Origin check failed. Origin: ${origin}, Allowed: ${allowedOrigins.join(', ')}`);
+        return res.status(403).json({ error: 'Forbidden: Invalid origin' });
+      }
     }
 
     // Fetch config from Pastebin
