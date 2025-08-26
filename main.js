@@ -33,10 +33,10 @@ app.post('/api/clickhouse', async (req, res) => {
     }
 
     const clientIP = req.clientIP;
-    const allowedOrigin = 'https://dropbase.shop';
+  //  const allowedOrigin = 'https://dropbase.shop';
     const origin = req.get('origin') || req.get('referer') || '';
     
-    if (!origin.startsWith(allowedOrigin) && process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production') {
       return res.status(403).json({ error: 'Forbidden: Invalid origin' });
     }
 
@@ -93,4 +93,5 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
 });
