@@ -1,22 +1,11 @@
-const express = require('express');
-const crypto = require('crypto');
-const rateLimit = require('express-rate-limit');
-const router = express.Router();
+// api/auth.js
+import crypto from 'crypto';
 
 const sessions = new Map();
 
-// Limit how often someone can request a new session
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  message: { error: 'Too many auth attempts' }
-});
-
-router.use(authLimiter);
-
-// Helper to get IP
+// Helper to get client IP
 function getIP(req) {
-  return req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.ip || 'unknown';
+  return req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || 'unknown';
 }
 
 // Generate a random session token
@@ -24,35 +13,53 @@ function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+// Rate limiter map for auth requests
+const authRateLimits = new Map();
+
+// Check rate limit for auth
+function checkAuthRateLimit(ip) {
+  const now = Date.now();
+  if (!authRateLimits.has(ip)) authRateLimits.set(ip, []);
+  const requests = authRateLimits.get(ip).filter(time => now - time < 15 * 60 * 1000); // 15 min
+  if (requests.length >= 10) return false;
+  requests.push(now);
+  authRateLimits.set(ip, requests);
+  return true;
+}
+
 // Create a new session
-router.post('/', (req, res) => {
+async function createSession(req, res) {
+  const ip = getIP(req);
+
+  if (!checkAuthRateLimit(ip)) {
+    return res.status(429).json({ error: 'Too many auth attempts' });
+  }
+
   try {
     const sessionId = generateToken();
     const sessionData = {
-      ip: getIP(req),
+      ip,
       timestamp: Date.now(),
-      expiresAt: Date.now() + (30 * 60 * 1000), // 30 minutes
+      expiresAt: Date.now() + 30 * 60 * 1000, // 30 minutes
       requestCount: 0,
       maxRequests: 200
     };
 
     sessions.set(sessionId, sessionData);
 
-    res.json({
+    res.status(200).json({
       token: sessionId,
       expiresIn: 1800,
       requestLimit: 200
     });
-  } catch (error) {
+  } catch (err) {
     res.status(500).json({ error: 'Auth failed' });
   }
-});
+}
 
-// Validate session automatically
+// Validate session
 function validateSession(req) {
   const token = req.headers['x-session-token'];
-
-  // If no token, throw error automatically
   if (!token) throw new Error('No token provided');
 
   const session = sessions.get(token);
@@ -69,7 +76,7 @@ function validateSession(req) {
     throw new Error('Rate limit exceeded');
   }
 
-  // Increment request count automatically
+  // Increment request count
   session.requestCount++;
   sessions.set(token, session);
 
@@ -84,7 +91,14 @@ setInterval(() => {
   }
 }, 60000);
 
-// Expose validateSession for your routes
-router.validateSession = validateSession;
+// Serverless handler
+export default async function handler(req, res) {
+  if (req.method === 'POST') {
+    return createSession(req, res);
+  }
 
-module.exports = router;
+  res.status(405).json({ error: 'Method not allowed' });
+}
+
+// Expose validateSession for other modules
+export { validateSession };
