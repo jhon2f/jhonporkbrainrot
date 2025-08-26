@@ -1,11 +1,6 @@
 import crypto from 'crypto';
 
-// Use global to persist across function invocations in serverless environment
-global.sessions = global.sessions || new Map();
-global.authRateLimits = global.authRateLimits || new Map();
-
-const sessions = global.sessions;
-const authRateLimits = global.authRateLimits;
+const authRateLimits = new Map();
 
 // Helper to get client IP
 function getIP(req) {
@@ -16,12 +11,52 @@ function getIP(req) {
          'unknown';
 }
 
-// Generate a session token using IP and timestamp for consistency
-function generateToken(ip) {
-  const timestamp = Date.now();
-  const randomBytes = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.createHash('sha256').update(`${ip}-${timestamp}-${randomBytes}`).digest('hex');
-  return hash;
+// JWT-like token generation (simplified)
+function generateJWT(payload) {
+  const secret = process.env.JWT_SECRET || 'default-secret-change-in-production';
+  const header = { alg: 'HS256', typ: 'JWT' };
+  
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64url');
+  
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+// JWT validation
+function validateJWT(token) {
+  const secret = process.env.JWT_SECRET || 'default-secret-change-in-production';
+  const parts = token.split('.');
+  
+  if (parts.length !== 3) {
+    throw new Error('Invalid token format');
+  }
+  
+  const [encodedHeader, encodedPayload, signature] = parts;
+  
+  // Verify signature
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64url');
+  
+  if (signature !== expectedSignature) {
+    throw new Error('Invalid token signature');
+  }
+  
+  // Decode payload
+  const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString());
+  
+  // Check expiration
+  if (Date.now() > payload.exp) {
+    throw new Error('Token expired');
+  }
+  
+  return payload;
 }
 
 // Check rate limit for auth
@@ -43,20 +78,20 @@ async function createSession(req, res) {
   }
 
   try {
-    const sessionId = generateToken(ip);
-    const sessionData = {
+    const now = Date.now();
+    const payload = {
       ip,
-      timestamp: Date.now(),
-      expiresAt: Date.now() + 30 * 60 * 1000, // 30 minutes
+      iat: now,
+      exp: now + 30 * 60 * 1000, // 30 minutes
       requestCount: 0,
       maxRequests: 200
     };
 
-    sessions.set(sessionId, sessionData);
-    console.log(`Created session ${sessionId} for IP ${ip}`);
+    const token = generateJWT(payload);
+    console.log(`Created JWT token for IP ${ip}`);
 
     res.status(200).json({
-      token: sessionId,
+      token,
       expiresIn: 1800,
       requestLimit: 200
     });
@@ -66,56 +101,45 @@ async function createSession(req, res) {
   }
 }
 
-// Validate session
+// Validate session (exported for use in other functions)
 function validateSession(req) {
   const token = req.headers['x-session-token'];
   if (!token) throw new Error('No token provided');
 
-  console.log(`Validating token ${token}, sessions size: ${sessions.size}`);
-
-  const session = sessions.get(token);
-  if (!session) {
-    console.log('Session not found, available sessions:', Array.from(sessions.keys()));
-    throw new Error('Invalid session');
+  console.log(`Validating JWT token`);
+  
+  try {
+    const payload = validateJWT(token);
+    console.log(`JWT validated for IP ${payload.ip}, issued at ${new Date(payload.iat).toISOString()}`);
+    return payload;
+  } catch (err) {
+    console.log(`JWT validation failed: ${err.message}`);
+    throw new Error(`Invalid session: ${err.message}`);
   }
-
-  // Check expiry
-  if (Date.now() > session.expiresAt) {
-    sessions.delete(token);
-    throw new Error('Session expired');
-  }
-
-  // Check request count
-  if (session.requestCount >= session.maxRequests) {
-    throw new Error('Rate limit exceeded');
-  }
-
-  // Increment request count
-  session.requestCount++;
-  sessions.set(token, session);
-  console.log(`Session validated, request count: ${session.requestCount}`);
-  return session;
 }
 
-// Clean up expired sessions (run on each request since setInterval won't work reliably)
-function cleanupExpiredSessions() {
+// Clean up expired rate limit entries
+function cleanupRateLimits() {
   const now = Date.now();
   let cleaned = 0;
-  for (const [id, session] of sessions.entries()) {
-    if (session.expiresAt < now) {
-      sessions.delete(id);
+  for (const [ip, requests] of authRateLimits.entries()) {
+    const validRequests = requests.filter(time => now - time < 15 * 60 * 1000);
+    if (validRequests.length === 0) {
+      authRateLimits.delete(ip);
       cleaned++;
+    } else {
+      authRateLimits.set(ip, validRequests);
     }
   }
   if (cleaned > 0) {
-    console.log(`Cleaned up ${cleaned} expired sessions`);
+    console.log(`Cleaned up ${cleaned} expired rate limit entries`);
   }
 }
 
 // Main handler
 export default async function handler(req, res) {
-  // Clean up expired sessions on each request
-  cleanupExpiredSessions();
+  // Clean up expired rate limits
+  cleanupRateLimits();
 
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -128,6 +152,14 @@ export default async function handler(req, res) {
 
   if (req.method === 'POST') {
     return createSession(req, res);
+  }
+
+  if (req.method === 'GET') {
+    // Health check or token validation endpoint
+    return res.status(200).json({ 
+      status: 'operational',
+      message: 'Auth service ready' 
+    });
   }
 
   res.status(405).json({ error: 'Method not allowed' });
