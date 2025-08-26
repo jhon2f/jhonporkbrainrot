@@ -1,6 +1,4 @@
-// api/lookup.js
-import rateLimit from 'express-rate-limit'; // Optional: we implement manual limiter here
-import fetch from 'node-fetch';
+import { validateSession } from './auth.js';
 
 const rateLimits = new Map();
 
@@ -13,6 +11,15 @@ function checkRateLimit(ip) {
   requests.push(now);
   rateLimits.set(ip, requests);
   return true;
+}
+
+// Get client IP
+function getIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0] || 
+         req.headers['cf-connecting-ip'] ||
+         req.socket.remoteAddress || 
+         req.connection.remoteAddress ||
+         'unknown';
 }
 
 // Detect type function
@@ -41,10 +48,13 @@ async function queryOSINT(query, type) {
     });
 
     clearTimeout(timeout);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
     return await response.json();
   } catch (err) {
     clearTimeout(timeout);
+    console.error('OSINT query error:', err.message);
     throw err;
   }
 }
@@ -66,22 +76,35 @@ async function queryIdLeak(params) {
     });
 
     clearTimeout(timeout);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
     return await response.json();
   } catch (err) {
     clearTimeout(timeout);
+    console.error('IdLeak query error:', err.message);
     throw err;
   }
 }
 
-// Serverless handler
+// Main handler
 export default async function handler(req, res) {
-  const clientIP = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || 'unknown';
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Session-Token');
 
-  if (req.method === 'GET' && req.url.endsWith('/health')) {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  const clientIP = getIP(req);
+
+  // Health check endpoint
+  if (req.method === 'GET' && req.url?.endsWith('/health')) {
     return res.status(200).json({
       status: 'operational',
-      supported_types: ['email', 'username', 'phone', 'ip', 'domain']
+      supported_types: ['email', 'username', 'phone', 'ip', 'domain', 'idleak']
     });
   }
 
@@ -89,31 +112,47 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Validate session
+  try {
+    validateSession(req);
+  } catch (err) {
+    return res.status(401).json({ error: err.message });
+  }
+
+  // Check rate limit
   if (!checkRateLimit(clientIP)) {
     return res.status(429).json({ error: 'Rate limit exceeded' });
   }
 
   try {
-    const body = await new Promise((resolve, reject) => {
-      let data = '';
-      req.on('data', chunk => data += chunk);
-      req.on('end', () => resolve(JSON.parse(data)));
-      req.on('error', reject);
-    });
+    const { query, type } = req.body;
 
-    const { query, type } = body;
-    if (!query || query.length < 2 || query.length > 1000) {
-      return res.status(400).json({ error: 'Invalid query' });
+    if (!query || typeof query !== 'string' || query.length < 2 || query.length > 1000) {
+      return res.status(400).json({ error: 'Invalid query parameter' });
     }
 
     let results;
     let searchType = type;
 
     if (type === 'idleak') {
-      const params = JSON.parse(query);
+      let params;
+      try {
+        params = JSON.parse(query);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid JSON in query for idleak' });
+      }
+
+      if (!process.env.IDLEAK_API_KEY) {
+        return res.status(503).json({ error: 'IdLeak service not configured' });
+      }
+
       results = await queryIdLeak(params);
       searchType = 'idleak';
     } else {
+      if (!process.env.API_KEY) {
+        return res.status(503).json({ error: 'OSINT service not configured' });
+      }
+
       const sanitized = query.replace(/[<>"'\x00-\x1f\x7f-\x9f]/g, '').trim();
       searchType = type === 'keyword' ? 'username' : (type || detectType(sanitized));
       results = await queryOSINT(sanitized, searchType);
@@ -130,9 +169,14 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('Lookup error:', err.message);
 
-    if (err.name === 'AbortError') return res.status(408).json({ error: 'Request timeout' });
-    if (err.message.includes('HTTP') || err.code === 'ENOTFOUND') return res.status(503).json({ error: 'Service unavailable' });
+    if (err.name === 'AbortError') {
+      return res.status(408).json({ error: 'Request timeout' });
+    }
+    
+    if (err.message.includes('HTTP') || err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') {
+      return res.status(503).json({ error: 'External service unavailable' });
+    }
 
-    res.status(500).json({ error: 'Internal error' });
+    res.status(500).json({ error: 'Internal server error' });
   }
 }
