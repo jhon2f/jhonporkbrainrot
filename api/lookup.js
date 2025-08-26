@@ -1,42 +1,54 @@
-// Import the validateSession function and ensure global sessions
 import crypto from 'crypto';
 
-// Use global to persist across function invocations
-global.sessions = global.sessions || new Map();
-global.rateLimits = global.rateLimits || new Map();
+const rateLimits = new Map();
 
-const sessions = global.sessions;
-const rateLimits = global.rateLimits;
+// JWT validation (duplicated to avoid import issues in serverless)
+function validateJWT(token) {
+  const secret = process.env.JWT_SECRET || 'default-secret-change-in-production';
+  const parts = token.split('.');
+  
+  if (parts.length !== 3) {
+    throw new Error('Invalid token format');
+  }
+  
+  const [encodedHeader, encodedPayload, signature] = parts;
+  
+  // Verify signature
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64url');
+  
+  if (signature !== expectedSignature) {
+    throw new Error('Invalid token signature');
+  }
+  
+  // Decode payload
+  const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString());
+  
+  // Check expiration
+  if (Date.now() > payload.exp) {
+    throw new Error('Token expired');
+  }
+  
+  return payload;
+}
 
-// Validate session (duplicated here to avoid import issues in serverless)
+// Validate session
 function validateSession(req) {
   const token = req.headers['x-session-token'];
   if (!token) throw new Error('No token provided');
 
-  console.log(`Validating token ${token}, sessions size: ${sessions.size}`);
-
-  const session = sessions.get(token);
-  if (!session) {
-    console.log('Session not found in lookup, available sessions:', Array.from(sessions.keys()));
-    throw new Error('Invalid session');
+  console.log(`Validating JWT token in lookup`);
+  
+  try {
+    const payload = validateJWT(token);
+    console.log(`JWT validated in lookup for IP ${payload.ip}`);
+    return payload;
+  } catch (err) {
+    console.log(`JWT validation failed in lookup: ${err.message}`);
+    throw new Error(`Invalid session: ${err.message}`);
   }
-
-  // Check expiry
-  if (Date.now() > session.expiresAt) {
-    sessions.delete(token);
-    throw new Error('Session expired');
-  }
-
-  // Check request count
-  if (session.requestCount >= session.maxRequests) {
-    throw new Error('Rate limit exceeded');
-  }
-
-  // Increment request count
-  session.requestCount++;
-  sessions.set(token, session);
-  console.log(`Session validated in lookup, request count: ${session.requestCount}`);
-  return session;
 }
 
 // Rate limiter
@@ -151,8 +163,10 @@ export default async function handler(req, res) {
 
   // Validate session
   try {
-    validateSession(req);
+    const session = validateSession(req);
+    console.log(`Session validated for IP: ${session.ip}`);
   } catch (err) {
+    console.error(`Session validation failed: ${err.message}`);
     return res.status(401).json({ error: err.message });
   }
 
