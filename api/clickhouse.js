@@ -47,11 +47,13 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: 'Too many requests' });
     }
 
-    // Origin check for production
-    const allowedOrigin = 'https://dropbase.shop';
+    // Origin check for production - more flexible
+    const allowedOrigins = ['https://dropbase.shop', 'https://your-app.vercel.app'];
     const origin = req.headers['origin'] || req.headers['referer'] || '';
     
-    if (process.env.NODE_ENV === 'production' && !origin.startsWith(allowedOrigin)) {
+    // Skip origin check in development or if no origin header
+    if (process.env.NODE_ENV === 'production' && origin && !allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      console.log(`Origin check failed. Origin: ${origin}, Allowed: ${allowedOrigins.join(', ')}`);
       return res.status(403).json({ error: 'Forbidden: Invalid origin' });
     }
 
