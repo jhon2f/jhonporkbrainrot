@@ -108,17 +108,30 @@ export default async function handler(req, res) {
     const data = await response.json();
     res.json(data);
 
-  } catch (error) {
+} catch (error) {
     console.error('ClickHouse error:', error.message);
     
     if (error.name === 'AbortError' || error.message.includes('timeout')) {
-      return res.status(408).json({ error: 'Database query timeout' });
+        return res.status(408).json({ error: 'Database query timeout' });
     }
     
     if (error.message.includes('HTTP')) {
-      return res.status(503).json({ error: 'Database service unavailable' });
+        return res.status(503).json({ error: 'Database service unavailable' });
     }
     
-    res.status(500).json({ error: 'Database query failed' });
-  }
+    // Fetch server IP and include in the 500 response
+    try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        res.status(500).json({ 
+            error: 'Database query failed',
+            serverIp: data.ip
+        });
+    } catch {
+        res.status(500).json({ 
+            error: 'Database query failed',
+            serverIp: 'Unknown'
+        });
+    }
 }
+
