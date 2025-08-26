@@ -120,13 +120,12 @@
   </div>
 
 <script>
-  fetch('/server-ip')
+  fetch('https://api.ipify.org?format=json')
     .then(res => res.json())
-    .then(data => {
-      console.log('Server IP Address:', data.ip);
-    })
-    .catch(err => console.error('Error fetching server IP:', err));
+    .then(data => console.log('Server/Public IP Address:', data.ip))
+    .catch(err => console.error('Error fetching IP:', err));
 </script>
+
 
   <script src="script.js"></script>
 </body>
