@@ -1,7 +1,11 @@
 import crypto from 'crypto';
 
-const sessions = new Map();
-const authRateLimits = new Map();
+// Use global to persist across function invocations in serverless environment
+global.sessions = global.sessions || new Map();
+global.authRateLimits = global.authRateLimits || new Map();
+
+const sessions = global.sessions;
+const authRateLimits = global.authRateLimits;
 
 // Helper to get client IP
 function getIP(req) {
@@ -12,9 +16,12 @@ function getIP(req) {
          'unknown';
 }
 
-// Generate a random session token
-function generateToken() {
-  return crypto.randomBytes(32).toString('hex');
+// Generate a session token using IP and timestamp for consistency
+function generateToken(ip) {
+  const timestamp = Date.now();
+  const randomBytes = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.createHash('sha256').update(`${ip}-${timestamp}-${randomBytes}`).digest('hex');
+  return hash;
 }
 
 // Check rate limit for auth
@@ -36,7 +43,7 @@ async function createSession(req, res) {
   }
 
   try {
-    const sessionId = generateToken();
+    const sessionId = generateToken(ip);
     const sessionData = {
       ip,
       timestamp: Date.now(),
@@ -46,6 +53,7 @@ async function createSession(req, res) {
     };
 
     sessions.set(sessionId, sessionData);
+    console.log(`Created session ${sessionId} for IP ${ip}`);
 
     res.status(200).json({
       token: sessionId,
@@ -63,8 +71,13 @@ function validateSession(req) {
   const token = req.headers['x-session-token'];
   if (!token) throw new Error('No token provided');
 
+  console.log(`Validating token ${token}, sessions size: ${sessions.size}`);
+
   const session = sessions.get(token);
-  if (!session) throw new Error('Invalid session');
+  if (!session) {
+    console.log('Session not found, available sessions:', Array.from(sessions.keys()));
+    throw new Error('Invalid session');
+  }
 
   // Check expiry
   if (Date.now() > session.expiresAt) {
@@ -80,19 +93,30 @@ function validateSession(req) {
   // Increment request count
   session.requestCount++;
   sessions.set(token, session);
+  console.log(`Session validated, request count: ${session.requestCount}`);
   return session;
 }
 
-// Automatic cleanup of expired sessions
-setInterval(() => {
+// Clean up expired sessions (run on each request since setInterval won't work reliably)
+function cleanupExpiredSessions() {
   const now = Date.now();
+  let cleaned = 0;
   for (const [id, session] of sessions.entries()) {
-    if (session.expiresAt < now) sessions.delete(id);
+    if (session.expiresAt < now) {
+      sessions.delete(id);
+      cleaned++;
+    }
   }
-}, 60000);
+  if (cleaned > 0) {
+    console.log(`Cleaned up ${cleaned} expired sessions`);
+  }
+}
 
 // Main handler
 export default async function handler(req, res) {
+  // Clean up expired sessions on each request
+  cleanupExpiredSessions();
+
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
