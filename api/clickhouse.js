@@ -121,11 +121,9 @@ export default async function handler(req, res) {
     
     // Fetch server IP and include in the 500 response
     try {
-        const response = await fetch('https://api.ipify.org?format=json');
-        const data = await response.json();
+    
         res.status(500).json({ 
             error: 'Database query failed',
-            serverIp: data.ip
         });
     } catch {
         res.status(500).json({ 
