@@ -1,20 +1,21 @@
-// api/auth.js
 import crypto from 'crypto';
 
 const sessions = new Map();
+const authRateLimits = new Map();
 
 // Helper to get client IP
 function getIP(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress || 'unknown';
+  return req.headers['x-forwarded-for']?.split(',')[0] || 
+         req.headers['cf-connecting-ip'] ||
+         req.socket.remoteAddress || 
+         req.connection.remoteAddress ||
+         'unknown';
 }
 
 // Generate a random session token
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
-
-// Rate limiter map for auth requests
-const authRateLimits = new Map();
 
 // Check rate limit for auth
 function checkAuthRateLimit(ip) {
@@ -30,7 +31,6 @@ function checkAuthRateLimit(ip) {
 // Create a new session
 async function createSession(req, res) {
   const ip = getIP(req);
-
   if (!checkAuthRateLimit(ip)) {
     return res.status(429).json({ error: 'Too many auth attempts' });
   }
@@ -53,6 +53,7 @@ async function createSession(req, res) {
       requestLimit: 200
     });
   } catch (err) {
+    console.error('Auth error:', err);
     res.status(500).json({ error: 'Auth failed' });
   }
 }
@@ -79,11 +80,10 @@ function validateSession(req) {
   // Increment request count
   session.requestCount++;
   sessions.set(token, session);
-
   return session;
 }
 
-// Automatic cleanup of expired sessions every minute
+// Automatic cleanup of expired sessions
 setInterval(() => {
   const now = Date.now();
   for (const [id, session] of sessions.entries()) {
@@ -91,8 +91,17 @@ setInterval(() => {
   }
 }, 60000);
 
-// Serverless handler
+// Main handler
 export default async function handler(req, res) {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Session-Token');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method === 'POST') {
     return createSession(req, res);
   }
@@ -100,5 +109,5 @@ export default async function handler(req, res) {
   res.status(405).json({ error: 'Method not allowed' });
 }
 
-// Expose validateSession for other modules
+// Export validateSession for other modules
 export { validateSession };
