@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSINT Database</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="status" id="status">●ONLINE</div>
+  
+  <div class="container">
+    <header>
+      <h1><a href="https://t.me/dropsumshi">OSINT</a></h1>
+      <span id="recordCount">Loading...</span>
+    </header>
+
+    <nav>
+      <button class="tab active" data-tab="search">🔍 Search</button>
+      <button class="tab" data-tab="idleak">👤 IdLeak</button>
+      <button class="tab" data-tab="combo">📦 Extract</button>
+    </nav>
+
+    <main>
+      <!-- Search Tab -->
+      <section id="search" class="tab-content active">
+        <div class="panel">
+          <select id="searchType">
+            <option value="database">Database</option>
+            <option value="osint">OSINT</option>
+            <option value="both">Both</option>
+          </select>
+          
+          <select id="osintType" class="hidden">
+            <option value="email">Email</option>
+            <option value="username">Username</option>
+          </select>
+          
+          <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Enter search term...">
+            <button id="searchBtn">Search</button>
+          </div>
+        </div>
+        
+        <div id="searchTime"></div>
+        <div id="results" class="results"></div>
+        
+        <div class="actions hidden" id="searchActions">
+          <button onclick="exportData('search')">Export</button>
+          <button onclick="clearResults('search')">Clear</button>
+        </div>
+      </section>
+
+      <!-- IdLeak Tab -->
+      <section id="idleak" class="tab-content">
+        <div class="panel idleak-form">
+          <input type="text" id="firstName" placeholder="First Name">
+          <input type="text" id="lastName" placeholder="Last Name">
+          <input type="text" id="address" placeholder="Address">
+          <input type="text" id="city" placeholder="City">
+          <input type="text" id="state" placeholder="State">
+          <input type="text" id="zip" placeholder="ZIP Code">
+          <input type="text" id="ssn" placeholder="SSN">
+          <input type="text" id="dob" placeholder="DOB (YYYY-MM-DD)">
+          <input type="text" id="phone1" placeholder="Phone">
+          <button onclick="searchIdLeak()">Search IdLeak</button>
+        </div>
+        
+        <div id="idleakTime"></div>
+        <div id="idleakResults" class="results"></div>
+        
+        <div class="actions hidden" id="idleakActions">
+          <button onclick="exportData('idleak')">Export</button>
+          <button onclick="clearResults('idleak')">Clear</button>
+        </div>
+      </section>
+
+      <!-- Combo Tab -->
+      <section id="combo" class="tab-content">
+        <div class="panel">
+          <input type="text" id="comboKeyword" placeholder="Keyword...">
+          <input type="range" id="comboLimit" min="1000" max="50000" step="1000" value="10000">
+          <span id="comboLimitValue">10K</span>
+          <button onclick="extractCombos()">Extract</button>
+        </div>
+        
+        <div class="panel filters hidden" id="filters">
+          <label><input type="checkbox" id="emailFilter" checked> Email:Pass</label>
+          <label><input type="checkbox" id="userFilter" checked> User:Pass</label>
+          <label><input type="checkbox" id="removeUrl" checked> Remove URLs</label>
+          <label><input type="checkbox" id="removeDupe" checked> Remove Dupes</label>
+          <button onclick="applyFilters()">Apply</button>
+        </div>
+        
+        <div id="comboCount"></div>
+        <div id="comboResults" class="results"></div>
+        
+        <div class="actions hidden" id="comboActions">
+          <button onclick="exportData('combo')">Export</button>
+          <button onclick="showEditor()">Edit</button>
+        </div>
+        
+        <div class="editor hidden" id="editor">
+          <div class="editor-header">
+            <span id="editorCount">(0)</span>
+            <div>
+              <button onclick="clearEditor()">Clear</button>
+              <button onclick="saveEditor()">Save</button>
+            </div>
+          </div>
+          <textarea id="editorText"></textarea>
+          <div class="stats">
+            <span>Valid: <em id="validCount">0</em></span>
+            <span>Email: <em id="emailCount">0</em></span>
+            <span>User: <em id="userCount">0</em></span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
