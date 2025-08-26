@@ -1,6 +1,43 @@
-import { validateSession } from './auth.js';
+// Import the validateSession function and ensure global sessions
+import crypto from 'crypto';
 
-const rateLimits = new Map();
+// Use global to persist across function invocations
+global.sessions = global.sessions || new Map();
+global.rateLimits = global.rateLimits || new Map();
+
+const sessions = global.sessions;
+const rateLimits = global.rateLimits;
+
+// Validate session (duplicated here to avoid import issues in serverless)
+function validateSession(req) {
+  const token = req.headers['x-session-token'];
+  if (!token) throw new Error('No token provided');
+
+  console.log(`Validating token ${token}, sessions size: ${sessions.size}`);
+
+  const session = sessions.get(token);
+  if (!session) {
+    console.log('Session not found in lookup, available sessions:', Array.from(sessions.keys()));
+    throw new Error('Invalid session');
+  }
+
+  // Check expiry
+  if (Date.now() > session.expiresAt) {
+    sessions.delete(token);
+    throw new Error('Session expired');
+  }
+
+  // Check request count
+  if (session.requestCount >= session.maxRequests) {
+    throw new Error('Rate limit exceeded');
+  }
+
+  // Increment request count
+  session.requestCount++;
+  sessions.set(token, session);
+  console.log(`Session validated in lookup, request count: ${session.requestCount}`);
+  return session;
+}
 
 // Rate limiter
 function checkRateLimit(ip) {
