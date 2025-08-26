@@ -64,7 +64,7 @@ function checkAuthRateLimit(ip) {
   const now = Date.now();
   if (!authRateLimits.has(ip)) authRateLimits.set(ip, []);
   const requests = authRateLimits.get(ip).filter(time => now - time < 15 * 60 * 1000); // 15 min
-  if (requests.length >= 10) return false;
+  if (requests.length >= 50) return false;
   requests.push(now);
   authRateLimits.set(ip, requests);
   return true;
@@ -167,3 +167,4 @@ export default async function handler(req, res) {
 
 // Export validateSession for other modules
 export { validateSession };
+
